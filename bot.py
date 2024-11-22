@@ -10,7 +10,7 @@ import re
 # API Configuration
 API_ID = '20115110'
 API_HASH = '192c9900730edbd7e03fe772e3f8810d'
-BOT_TOKEN = '7816226672:AAGjfEzFvg6Hi4wWJpCHuLby6hFuRbaHyVk'
+BOT_TOKEN = '7811834226:AAEz5s-cNCFFVWqE2EoaHRZpLzfVKCss4es'
 SESSION_PASSWORD = "Soleplayer0p3$"
 
 # Constants
